@@ -13,9 +13,8 @@ CrZsJsPPZsGzwwsLwLmpwMDw")
 
 (defn parse-line
   [l]
-  (let [size (count l)]
-    [(subs l 0 (/ size 2))
-     (subs l (/ size 2))]))
+  (let [half (/ (count l) 2)]
+    (split-at half l)))
 
 (defn process-line
   [l]

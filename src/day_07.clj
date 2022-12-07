@@ -29,20 +29,30 @@ $ ls
 7214296 k")
 
 (defn parse-ls-output
+  "Parses the output of `ls` into a vector where the first element
+  is the file name (or directory) and the optional second element is
+  the size (if it’s a file)."
   [l]
-  (let [dir      (rest (re-find #"dir (\w+)" l))
-        [size f] (rest (re-find #"(\d+) (.+)" l))]
-    (if size
-      [f (parse-long size)]
-      [(first dir)])))
+  (let [matched (rest (re-find #"(dir|\d+) (.+)" l))
+        f       (second matched)]
+    (if (-> matched first (= "dir"))
+      [f]
+      [f (-> matched first parse-long)])))
+
+(comment
+
+  (parse-ls-output "4060174 j")
+  (parse-ls-output "dir e")
+
+  nil)
 
 (defn parse-command
   [c]
   (let [[command & results] (str/split-lines c)
-        [prog & args] (str/split command #" ")]
+        [prog & args]       (str/split command #" ")]
     (case prog
       "cd" {:prog prog :args (first args)}
-      "ls" {:prog prog :res (map parse-ls-output results)})))
+      "ls" {:prog prog :res  (map parse-ls-output results)})))
 
 (defn parse-input
   [i]
@@ -50,6 +60,22 @@ $ ls
     (map parse-command commands)))
 
 (defn step
+  "Processes a step. If it’s a `cd`, changes the directory inside
+  the state.
+  If it’s an `ls`, update the tree in the state to reflect the output
+  of `ls`, using the state’s pwd to know which keys to update.
+
+  State
+  -----
+  :pwd  Value of the working directory as a stack. Contains the root `/`.
+  :tree Filesystem we generated as a map.
+
+  Example
+  -------
+  {:pwd (\"a\" \"/\")
+   :tree {\"/\" {\"a\" {\"foo.txt\" 132832}
+                 \"bar.csv\" 232323}}}
+  "
   [state {:keys [prog args res]}]
   (case prog
     "cd" (assoc state :pwd
@@ -65,7 +91,13 @@ $ ls
                    res))))
 
 (defn squash-sizes
-  "Traverses the tree and squashes the directories to their sizes."
+  "Traverses the tree and squashes the directories into the following form:
+
+  :size    Total size of the files *contained* in the directory.
+  :folders Map of the folders containted in the directory.
+
+  Note: The size is not «recursive». It does not reflect the size of the folders
+        contained in the directory."
   [t]
   (:folders (walk/postwalk
              (fn [node]
@@ -83,32 +115,33 @@ $ ls
     (:tree state)))
 
 (defn total-size
+  "Goes through the tree to compute its total size, including sub-folders."
   [t]
   (+ (:size t)
      (->> t
           :folders
           vals
-          (map (comp total-size))
+          (map total-size)
           (reduce +))))
 
 (defn flatten-tree
+  "Goes through the tree to create the sequence of
+  directory and their total sizes. Each time the total size is recomputed, which
+  is suboptimal.
+  Ideally, there should be a bottom-up approach."
   [t]
   (->> t
-       (reduce (fn aggregate [acc [k {:keys [folders] :as node}]]
-                 (let [s (total-size node)]
-                   (cond-> acc
-                     :always (conj  {:name k :size s})
-                     (seq folders) (concat acc (map #(aggregate (list) %) folders)))))
-               (list))
+       (map (fn unfold [[k v]]
+              (conj (or (map unfold (:folders v)) list) {:name k :size (total-size v)})))
        (flatten)))
 
 (defn input->flat-tree
   [i]
   (-> i
       parse-input
-      (generate-tree)
-      (squash-sizes)
-      (flatten-tree)))
+      generate-tree
+      squash-sizes
+      flatten-tree))
 
 (def maximum-folder-size 100000)
 
